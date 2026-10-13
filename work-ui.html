@@ -31,6 +31,8 @@ function syncChromeHeight(){const full=$('full-chrome'),compact=$('expand-chrome
 function setChromeCollapsed(value){if(value&&($('page').hidden||pending||!$('install-panel').hidden||document.activeElement===$('url')))return;chromeCollapsed=!!value;$('chrome').classList.toggle('collapsed',chromeCollapsed);$('full-chrome').setAttribute('aria-hidden',String(chromeCollapsed));$('expand-chrome').setAttribute('aria-hidden',String(!chromeCollapsed));syncChromeHeight();}
 function handleFrameScroll(event){if(event.source!==$('page').contentWindow||!event.data||event.data.type!=='open-page-scroll'||event.data.channel!==frameKey||!Number.isFinite(event.data.y)||!['up','down'].includes(event.data.direction))return;setChromeCollapsed(event.data.direction==='down'&&event.data.y>40);}
 $('expand-chrome').onclick=()=>setChromeCollapsed(false);
+function selectUrl(){this.select();}
+$('url').onfocus=selectUrl;$('url').onclick=selectUrl;
 function prepare(d){const bridgeKey=scrollKey();let doc;if(/text\/plain/.test(d.contentType)){doc=document.implementation.createHTMLDocument('Captured page');const p=doc.createElement('pre');p.textContent=d.html;p.style.whiteSpace='pre-wrap';doc.body.append(p);}else doc=new DOMParser().parseFromString(d.html,'text/html');
 const title=doc.title||new URL(d.sourceUrl).hostname;
 // Remove static subscription dialogs while retaining the article already present in HTML.

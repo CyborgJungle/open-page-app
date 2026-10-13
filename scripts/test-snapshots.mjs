@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+import {DOMParser} from 'linkedom';
+const ui=await readFile(new URL('../work-ui.html',import.meta.url),'utf8');
+const document=new DOMParser().parseFromString(ui,'text/html');
+const context=vm.createContext({document,DOMParser,URL,AbortController,Blob,console,setTimeout,clearTimeout});
+vm.runInContext(ui.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+function run(html,fn='prepare'){context.input={html,contentType:'text/html',sourceKind:'live',sourceUrl:'https://publisher.org/story',resolvedUrl:'https://publisher.org/story'};return vm.runInContext(fn+'(input)',context);}
+const article='<article><h1>Research article</h1><p>'+('Substantive public article text. '.repeat(220))+'</p><img src="/hero.jpg"><div class="address-book">Keep ordinary content</div></article>';
+const fixture='<html><head><title>Research article</title><style>.ad-stickyhero{position:fixed;top:100px;height:300px;background:#eee}article{padding:30px}</style></head><body><header>Publisher navigation</header><div data-testid="sticky-hero-ad" class="StickyHeroAdWrapper-a ad-stickyhero"><div class="AdWrapper-b ad should-hold-space"><iframe src="https://ads.test"></iframe></div></div>'+article+'<div class="ad-slot">Advertisement</div><div class="ad-container"><img src="/sponsor.jpg" alt="Sponsor"></div><script>alert(1)</script><img src="javascript:alert(2)" onerror="alert(3)"></body></html>';
+let r=run(fixture);let parsed=new DOMParser().parseFromString(r.html,'text/html');assert.equal(parsed.querySelector('[data-testid="sticky-hero-ad"]'),null);assert.equal(parsed.querySelector('.ad-slot'),null);assert.ok(parsed.querySelector('.ad-container img'));assert.equal(parsed.querySelector('script'),null);assert.ok(parsed.querySelector('style'));assert.equal(parsed.querySelector('h1').textContent,'Research article');assert.equal(parsed.querySelector('article img').getAttribute('src'),'https://publisher.org/hero.jpg');assert.ok(parsed.querySelector('.address-book'));assert.equal(parsed.querySelector('[onerror]'),null);assert.equal(parsed.querySelector('img[src^="javascript:"]'),null);assert.match(parsed.querySelector('meta[http-equiv]').getAttribute('content'),/script-src 'none'/);
+const json=free=>'<script type="application/ld+json">'+JSON.stringify({'@type':'NewsArticle',isAccessibleForFree:free,wordCount:1100})+'</script>';
+let info=run('<html><head>'+json(false)+'</head><body><main><p>'+('Public excerpt. '.repeat(40))+'</p></main></body></html>','inspect');assert.equal(info.limited,true);assert.equal(info.restricted,true);
+info=run('<html><head>'+json(true)+'</head><body>'+article+'</body></html>','inspect');assert.equal(info.limited,false);
+info=run('<html><body><main>Verify you are human. Enable JavaScript and cookies to continue.</main><form id="challenge-form"></form></body></html>','inspect');assert.equal(info.blocked,true);
+info=run('<html><body><article><div class="article__body"><p>Subscribe to continue reading. Subscription required.</p></div><aside>'+('Recommendations '.repeat(1000))+'</aside></article></body></html>','inspect');assert.equal(info.limited,true);assert.ok(info.words<20);
+try {
+const wired=await readFile(new URL('../fixtures/wired-source.html',import.meta.url),'utf8');const original=new DOMParser().parseFromString(wired,'text/html');r=run(wired);parsed=new DOMParser().parseFromString(r.html,'text/html');assert.ok(original.querySelector('[data-testid="sticky-hero-ad"]'));assert.equal(parsed.querySelector('[data-testid="sticky-hero-ad"]'),null);assert.equal(parsed.querySelector('.ad-stickyhero'),null);assert.equal(parsed.querySelector('.article__body').textContent,original.querySelector('.article__body').textContent);assert.equal(parsed.querySelector('h1').textContent,original.querySelector('h1').textContent);console.log('Live WIRED fixture passed: empty sticky ad removed; article text, heading, and styles retained.');
+} catch (error) { if(error.code!=='ENOENT')throw error; }
+console.log('Snapshot regression checks passed: empty ads, substantive media, article preservation, safe assets, no scripts, paid metadata, excerpt detection, challenges, and recommendation noise.');

@@ -63,7 +63,7 @@ async function checkRobots(u, signal) {
 }
 async function captureLive(url, signal, respectRobots=true) {
   const {response:r,url:resolvedUrl}=await plainFetch(url,signal,respectRobots);
-  if(!r.ok){await r.body?.cancel();throw new Error('Website returned HTTP '+r.status+'.');}
+  if(!r.ok){await r.body?.cancel();const reasons={401:'Website requires sign-in',402:'Website requires payment for access',403:'Website blocked this request',429:'Website temporarily limited requests'};throw new Error((reasons[r.status]||'Website returned an error')+' (HTTP '+r.status+').');}
   const contentType=r.headers.get('content-type')||'';
   if(!/text\/html|application\/xhtml\+xml|text\/plain/i.test(contentType)){await r.body?.cancel();throw new Error('This URL is not an HTML or text page.');}
   const {text:html,bytes}=await boundedText(r,MAX_BYTES,true);const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -79,7 +79,8 @@ async function captureArchive(url, signal) {
   const replay='https://web.archive.org/web/'+snapshot.timestamp+'id_/'+url;
   const content=await captureLive(replay,signal,false);
   if(new URL(content.resolvedUrl).hostname!=='web.archive.org')throw new Error('Archived copy redirected outside Wayback.');
-  return {...content,sourceKind:'wayback',archiveTimestamp:snapshot.timestamp,archiveUrl:archived.href.replace(/^http:/,'https:')};
+  const actualTimestamp=new URL(content.resolvedUrl).pathname.match(/^\/web\/(\d{14})/)?.[1]||snapshot.timestamp;
+  return {...content,sourceKind:'wayback',archiveTimestamp:actualTimestamp,archiveUrl:'https://web.archive.org/web/'+actualTimestamp+'/'+url};
 }
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 function json(data,status=200){return Response.json(data,{status,headers});}
@@ -93,9 +94,9 @@ export default {
       if(!/application\/json/i.test(request.headers.get('content-type')||''))return json({error:'Send a JSON request.'},415);
       try {
         const body=JSON.parse(await boundedText(request,16*1024));const u=normalizeUrl(body.url);const mode=['auto','live','wayback'].includes(body.mode)?body.mode:'auto';
-        const signal=AbortSignal.timeout(45000);let result,liveError=null;
-        if(mode==='wayback')result=await captureArchive(u.href,signal);
-        else { try{result={...await captureLive(u.href,signal),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await captureArchive(u.href,signal);}catch(a){throw new Error(liveError+' '+a.message);}} }
+        let result,liveError=null;const archiveSignal=()=>AbortSignal.timeout(35000);
+        if(mode==='wayback')result=await captureArchive(u.href,archiveSignal());
+        else { try{result={...await captureLive(u.href,AbortSignal.timeout(20000)),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await captureArchive(u.href,archiveSignal());}catch(a){throw new Error(liveError+' '+a.message);}} }
         return json({...result,sourceUrl:u.href,capturedAt:new Date().toISOString(),liveError});
       }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out. Try the archived-copy source.':e.message||'Capture failed.'},422);}
     }

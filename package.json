@@ -1,9 +1,14 @@
 {
-  "name": "sites-worker-esm-starter",
+  "name": "open-page",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "bash scripts/build.sh",
-    "validate": "node scripts/validate-artifact.mjs"
+    "validate": "node scripts/validate-artifact.mjs",
+    "test": "node scripts/test-capture.mjs && node scripts/test-snapshots.mjs",
+    "dev": "node dev-server.mjs"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.13"
   }
 }

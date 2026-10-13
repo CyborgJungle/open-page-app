@@ -1,2 +1,4 @@
 dist/
 site.tar.gz
+
+fixtures/wired-source.html

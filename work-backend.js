@@ -1,0 +1,105 @@
+const MAX_BYTES = 2 * 1024 * 1024;
+const UA = 'FolioResearchArchive/1.0';
+const dnsCache = new Map();
+export function normalizeUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('Enter a valid public webpage URL.');
+  const u = new URL(/^https?:\/\//i.test(value.trim()) ? value.trim() : 'https://' + value.trim());
+  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || (u.port && !['80', '443'].includes(u.port))) throw new Error('Use a public HTTP or HTTPS URL without credentials or a custom port.');
+  const h = u.hostname.toLowerCase();
+  if (!h.includes('.') || h.endsWith('.') || /^\d/.test(h) && /^[\d.]+$/.test(h) || h.includes(':') || /(?:^|\.)(localhost|local|internal|lan|test|invalid|example)$/.test(h)) throw new Error('Only public website hostnames can be captured.');
+  u.hash = ''; return u;
+}
+export function publicIp(ip) {
+  if (ip.includes(':')) return /^[23][0-9a-f]{3}:/i.test(ip) && !/^2001:(?:db8|0|2|10|20):/i.test(ip) && !/^2002:/i.test(ip);
+  const p = ip.split('.').map(Number);
+  if (p.length !== 4 || p.some(x => !Number.isInteger(x) || x < 0 || x > 255)) return false;
+  const [a,b,c] = p;
+  return !(a===0 || a===10 || a===127 || a>=224 || a===169&&b===254 || a===172&&b>=16&&b<=31 || a===192&&b===168 || a===100&&b>=64&&b<=127 || a===192&&b===0 || a===192&&b===88&&c===99 || a===192&&b===0&&c===2 || a===198&&(b===18||b===19) || a===198&&b===51&&c===100 || a===203&&b===0&&c===113);
+}
+async function checkHost(u, signal) {
+  const cached = dnsCache.get(u.hostname);
+  if (cached && cached > Date.now()) return;
+  const answers = await Promise.all(['A','AAAA'].map(async type => {
+    const r = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(u.hostname) + '&type=' + type, {headers:{accept:'application/dns-json'},signal});
+    if (!r.ok) throw new Error('Could not verify the public website address.');
+    const d = await r.json(); if (d.Status !== 0) throw new Error('Website address could not be resolved.');
+    return (d.Answer || []).filter(x => x.type === 1 || x.type === 28).map(x => x.data);
+  }));
+  const ips = answers.flat();
+  if (!ips.length || ips.some(ip => !publicIp(ip))) throw new Error('This address does not resolve to a public website.');
+  if (dnsCache.size > 1000) dnsCache.clear(); dnsCache.set(u.hostname, Date.now()+60000);
+}
+async function boundedText(response, limit = MAX_BYTES, includeBytes = false) {
+  if (Number(response.headers.get('content-length')) > limit) { await response.body?.cancel(); throw new Error('Page exceeds the 2 MB capture limit.'); }
+  const reader = response.body?.getReader(); if (!reader) return '';
+  let total=0; const chunks=[];
+  try { while(true) { const {value,done}=await reader.read(); if(done)break; total+=value.length; if(total>limit)throw new Error('Page exceeds the capture size limit.'); chunks.push(value); } }
+  catch(e) { await reader.cancel(); throw e; }
+  const all=new Uint8Array(total);let at=0;for(const v of chunks){all.set(v,at);at+=v.length;}
+  let decoder; try { decoder = new TextDecoder((response.headers.get('content-type')||'').match(/charset=([^; ]+)/i)?.[1]||'utf-8'); } catch { decoder = new TextDecoder(); }
+  const text=decoder.decode(all);return includeBytes?{text,bytes:all}:text;
+}
+export function robotsAllowed(text, path) {
+  const groups=[];let agents=[],rules=[],hasRule=false;
+  function end(){if(agents.length)groups.push({agents,rules});agents=[];rules=[];hasRule=false;}
+  for(const line of text.split(/\r?\n/)){const clean=line.replace(/#.*$/,'').trim();const m=clean.match(/^([^:]+):\s*(.*)$/);if(!m)continue;const k=m[1].toLowerCase().trim(),v=m[2].trim();if(k==='user-agent'){if(hasRule)end();agents.push(v.toLowerCase());}else if(k==='allow'||k==='disallow'){hasRule=true;if(v)rules.push({allow:k==='allow',path:v});}}
+  end();const specific=groups.filter(g=>g.agents.some(a=>a!=='*'&&'folioresearcharchive'.includes(a)));const selected=specific.length?specific:groups.filter(g=>g.agents.includes('*'));
+  let winner={length:-1,allow:true};for(const rule of selected.flatMap(g=>g.rules)){const end=rule.path.endsWith('$');const base=end?rule.path.slice(0,-1):rule.path;const pattern='^'+base.split('*').map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*')+(end?'$':'');const length=base.replace(/\*/g,'').length;if(new RegExp(pattern).test(path)&&(length>winner.length||length===winner.length&&rule.allow))winner={length,allow:rule.allow};}return winner.allow;
+}
+async function plainFetch(url, signal, robots = false) {
+  let u=normalizeUrl(url);
+  for(let hop=0;hop<6;hop++){
+    await checkHost(u,signal);
+    if(robots)await checkRobots(u,signal);
+    const r=await fetch(u.href,{redirect:'manual',headers:{'User-Agent':UA,Accept:'text/html,application/xhtml+xml,text/plain;q=0.8'},signal});
+    if([301,302,303,307,308].includes(r.status)) { const location=r.headers.get('location');await r.body?.cancel();if(!location)throw new Error('Website returned an empty redirect.');u=normalizeUrl(new URL(location,u).href);continue; }
+    return {response:r,url:u.href};
+  }throw new Error('Website redirects too many times.');
+}
+async function checkRobots(u, signal) {
+  const {response:r}=await plainFetch(u.origin+'/robots.txt',signal,false);
+  if(r.status===401||r.status===403){await r.body?.cancel();throw new Error('Website does not allow automated capture.');}
+  if(r.ok){const text=await boundedText(r,256*1024);if(!robotsAllowed(text,u.pathname+u.search))throw new Error('Website robots.txt disallows this page.');}else{await r.body?.cancel();if(r.status>=500)throw new Error('Website capture permissions are temporarily unavailable.');}
+}
+async function captureLive(url, signal, respectRobots=true) {
+  const {response:r,url:resolvedUrl}=await plainFetch(url,signal,respectRobots);
+  if(!r.ok){await r.body?.cancel();throw new Error('Website returned HTTP '+r.status+'.');}
+  const contentType=r.headers.get('content-type')||'';
+  if(!/text\/html|application\/xhtml\+xml|text\/plain/i.test(contentType)){await r.body?.cancel();throw new Error('This URL is not an HTML or text page.');}
+  const {text:html,bytes}=await boundedText(r,MAX_BYTES,true);const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return {html,resolvedUrl,httpStatus:r.status,contentType,responseSha256:[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join(''),responseBytes:bytes.length};
+}
+async function captureArchive(url, signal) {
+  const r=await fetch('https://archive.org/wayback/available?url='+encodeURIComponent(url),{signal,headers:{Accept:'application/json'}});
+  if(!r.ok)throw new Error('Wayback lookup is temporarily unavailable.');
+  const data=JSON.parse(await boundedText(r,64*1024));const snapshot=data.archived_snapshots?.closest;
+  if(!snapshot?.available||snapshot.status!=='200'||!/^\d{14}$/.test(snapshot.timestamp))throw new Error('No publicly accessible Wayback snapshot was found.');
+  const archived=new URL(snapshot.url);if(archived.hostname!=='web.archive.org')throw new Error('Archive returned an unexpected address.');
+  // Identity replay returns original document markup without archive toolbar scripts.
+  const replay='https://web.archive.org/web/'+snapshot.timestamp+'id_/'+url;
+  const content=await captureLive(replay,signal,false);
+  if(new URL(content.resolvedUrl).hostname!=='web.archive.org')throw new Error('Archived copy redirected outside Wayback.');
+  return {...content,sourceKind:'wayback',archiveTimestamp:snapshot.timestamp,archiveUrl:archived.href.replace(/^http:/,'https:')};
+}
+const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
+function json(data,status=200){return Response.json(data,{status,headers});}
+export default {
+  async fetch(request) {
+    const path=new URL(request.url).pathname;
+    if(path==='/api/health')return json({ok:true});
+    if(path==='/api/capture'){
+      if(request.method!=='POST')return json({error:'Use POST to capture a page.'},405);
+      const origin=request.headers.get('origin');if(origin&&origin!==new URL(request.url).origin)return json({error:'Capture requests must come from this site.'},403);
+      if(!/application\/json/i.test(request.headers.get('content-type')||''))return json({error:'Send a JSON request.'},415);
+      try {
+        const body=JSON.parse(await boundedText(request,16*1024));const u=normalizeUrl(body.url);const mode=['auto','live','wayback'].includes(body.mode)?body.mode:'auto';
+        const signal=AbortSignal.timeout(45000);let result,liveError=null;
+        if(mode==='wayback')result=await captureArchive(u.href,signal);
+        else { try{result={...await captureLive(u.href,signal),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await captureArchive(u.href,signal);}catch(a){throw new Error(liveError+' '+a.message);}} }
+        return json({...result,sourceUrl:u.href,capturedAt:new Date().toISOString(),liveError});
+      }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out. Try the archived-copy source.':e.message||'Capture failed.'},422);}
+    }
+    if(path!=='/')return new Response('Not found',{status:404,headers});
+    return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"}});
+  }
+};

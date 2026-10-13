@@ -21,7 +21,7 @@ The production entrypoint is `worker/index.js`. Site identity is in `.openai/hos
 
 ## Vercel deployment
 
-Import the repository into Vercel with the Other framework preset. `vercel.json` selects the build command and routes the app through `api/index.mjs`, using the same backend, security headers, icon assets, and service worker as the Worker deployment. No environment variables are required. The function has a 60-second duration to accommodate live capture followed by archive fallback. `npm run build:vercel` prepares this deployment; `npm test` verifies the route adapter and request body forwarding.
+Import the repository into Vercel with the Other framework preset. `vercel.json` selects the build command and routes capture requests through `api/index.mjs`, using the same backend as the Worker deployment. The website, icon assets, and service worker are generated in `public/` with matching security headers. No environment variables are required. The function has a 60-second duration to accommodate live capture followed by archive fallback. `npm run build:vercel` prepares this deployment; `npm test` verifies the route adapter, static output, headers, and request body forwarding.
 
 Empty advertising wrappers are collapsed using stable semantic classes and ad attributes, without matching ordinary words such as address or deleting substantive article media. Incomplete-page detection uses Article/NewsArticle schema metadata, declared article length, article-body text, and access-challenge markers. Metadata is a signal, not proof of completeness or a grant of access.
 

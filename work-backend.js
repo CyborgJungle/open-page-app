@@ -87,6 +87,9 @@ function json(data,status=200){return Response.json(data,{status,headers});}
 export default {
   async fetch(request) {
     const path=new URL(request.url).pathname;
+    if(path==='/manifest.webmanifest')return new Response(APP_MANIFEST,{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});
+    if(path==='/sw.js')return new Response(SERVICE_WORKER,{headers:{'Content-Type':'application/javascript','Cache-Control':'no-cache','Service-Worker-Allowed':'/'}});
+    if(ICONS[path])return new Response(Uint8Array.from(atob(ICONS[path]),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png','Cache-Control':'public, max-age=86400','X-Content-Type-Options':'nosniff'}});
     if(path==='/api/health')return json({ok:true});
     if(path==='/api/capture'){
       if(request.method!=='POST')return json({error:'Use POST to capture a page.'},405);
@@ -101,6 +104,6 @@ export default {
       }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out. Try the archived-copy source.':e.message||'Capture failed.'},422);}
     }
     if(path!=='/')return new Response('Not found',{status:404,headers});
-    return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https: http:; connect-src 'self'; img-src https: http: data:; font-src https: http: data:; media-src https: http:; frame-src 'self'; base-uri https: http:; frame-ancestors 'none'; form-action 'none'"}});
+    return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; style-src 'unsafe-inline' https: http:; connect-src 'self'; img-src https: http: data:; font-src https: http: data:; media-src https: http:; frame-src 'self'; base-uri https: http:; frame-ancestors 'none'; form-action 'none'"}});
   }
 };

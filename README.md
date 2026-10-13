@@ -1,6 +1,6 @@
 # Open Page
 
-A minimal webpage viewer: paste a URL, click Open, and see the available page with its original static layout, styles, and images. Download saves an HTML snapshot. The site is private.
+An installable, minimal web app: paste a URL, click Open, and see the available page with its original static layout, styles, and images. Download saves an HTML snapshot. The site is private.
 
 The backend fetches public HTML anonymously. The viewer removes website scripts and static subscription dialogs, keeps available article content, and isolates the snapshot in a sandboxed frame. If a live request is blocked, automatic mode tries a publicly available Wayback snapshot. Short captures containing subscription notices also trigger a lookup. An archive is selected only when it contains more text without a detected subscription notice. Historical copies display the original archive date.
 
@@ -20,3 +20,11 @@ The backend checks public DNS addresses and redirect targets, respects live robo
 The production entrypoint is `worker/index.js`. Site identity is in `.openai/hosting.json`.
 
 Empty advertising wrappers are collapsed using stable semantic classes and ad attributes, without matching ordinary words such as address or deleting substantive article media. Incomplete-page detection uses Article/NewsArticle schema metadata, declared article length, article-body text, and access-challenge markers. Metadata is a signal, not proof of completeness or a grant of access.
+
+## Install and iPhone support
+
+Open the public site in Safari, use Share → Add to Home Screen, and tap Add. An Install button also explains this action. The supplied custom icon is bundled at 180px for iPhone, 192px and 512px for web app manifests, and 32px for the browser tab. The manifest launches in standalone mode.
+
+The layout targets 320px and larger screens with 44px touch controls, a 16px URL input to avoid focus zoom, safe-area padding, and viewport sizing that does not require modern dynamic viewport units. JavaScript avoids optional chaining in the client, and spacing has fallbacks for Safari without flex-gap support. Actual old-iPhone hardware and OS versions have not been tested in this environment.
+
+The app shell is available offline after a successful first visit. Loading a new webpage and loading external images/styles still require internet access. Capture API responses are never cached by the service worker. Save uses the system share sheet where file sharing is supported, with a download fallback.

@@ -5,7 +5,7 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "validate": "node scripts/validate-artifact.mjs",
-    "test": "node scripts/test-capture.mjs && node scripts/test-snapshots.mjs",
+    "test": "node scripts/test-capture.mjs && node scripts/test-snapshots.mjs && node scripts/test-webapp.mjs",
     "dev": "node dev-server.mjs"
   },
   "devDependencies": {

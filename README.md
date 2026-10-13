@@ -2,6 +2,8 @@
 
 An installable, minimal web app: paste a URL, click Open, and see the available page with its original static layout, styles, and images.
 
+Live app: https://open-page-eta.vercel.app
+
 The backend fetches public HTML anonymously. The viewer removes website scripts and static subscription dialogs, keeps available article content, and isolates the snapshot in a sandboxed frame. If a live request is blocked, automatic mode tries a publicly available Wayback snapshot. Short captures containing subscription notices also trigger a lookup. An archive is selected only when it contains more text without a detected subscription notice. Historical copies display the original archive date.
 
 This cannot universally obtain full subscriber-only content that a publisher's server withholds. Archived copies may be unavailable, older, or incomplete. Dynamic pages that depend on JavaScript can render incompletely. Captured pages retain external styles, fonts, images, and media references, so they require internet access. Visitors see no bulk controls, collection, or explanatory sections.
@@ -20,6 +22,8 @@ The backend checks public DNS addresses and redirect targets, respects live robo
 The production entrypoint is `worker/index.js`. Site identity is in `.openai/hosting.json`.
 
 ## Vercel deployment
+
+The private `CyborgJungle/open-page` repository is connected to the `open-page` project in the `cyborgjungle` Vercel team. Pushing to `main` automatically deploys the production app.
 
 Import the repository into Vercel with the Other framework preset. `vercel.json` selects the build command and routes capture requests through `api/index.mjs`, using the same backend as the Worker deployment. The website, icon assets, and service worker are generated in `public/` with matching security headers. No environment variables are required. The function has a 60-second duration to accommodate live capture followed by archive fallback. `npm run build:vercel` prepares this deployment; `npm test` verifies the route adapter, static output, headers, and request body forwarding.
 

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+import {DOMParser} from 'linkedom';
+const ui=await readFile(new URL('../work-ui.html',import.meta.url),'utf8');
+const document=new DOMParser().parseFromString(ui,'text/html');
+const context=vm.createContext({document,DOMParser,URL,AbortController,Blob,console,setTimeout,clearTimeout,crypto:webcrypto});
+vm.runInContext(ui.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+const page=document.getElementById('page');assert.equal(document.getElementById('download'),null);assert.ok(!/navigator\.(?:share|canShare)/.test(ui));
+context.input={html:'<html><body><main>A long public document.</main><script>window.attack=true</script></body></html>',contentType:'text/html',sourceKind:'live',sourceUrl:'https://publisher.org/story',resolvedUrl:'https://publisher.org/story'};
+const prepared=vm.runInContext('prepare(input)',context);const frameDoc=new DOMParser().parseFromString(prepared.html,'text/html');const trusted=frameDoc.querySelector('script');assert.equal(frameDoc.querySelectorAll('script').length,1);assert.equal(trusted.getAttribute('nonce'),prepared.bridgeKey);assert.ok(!prepared.html.includes('window.attack'));assert.ok(!page.getAttribute('sandbox').includes('allow-same-origin'));
+const emitted=[];const listeners={};let clock=1000;
+const scrolling={scrollTop:0,scrollHeight:2000,clientHeight:500};const childDocument={scrollingElement:scrolling,documentElement:scrolling,body:{scrollTop:0,scrollHeight:2000,clientHeight:500},addEventListener:(type,fn)=>listeners['doc-'+type]=fn};
+const childWindow={innerHeight:500,pageYOffset:0,addEventListener:(type,fn)=>listeners['win-'+type]=fn};
+vm.runInNewContext(trusted.textContent,{document:childDocument,window:childWindow,parent:{postMessage:packet=>emitted.push(packet)},WeakMap,Math,Date:{now:()=>clock}});
+function scroll(y){childWindow.pageYOffset=y;scrolling.scrollTop=y;listeners['doc-scroll']({target:childDocument});}
+scroll(120);assert.equal(emitted.at(-1).direction,'down');assert.equal(emitted.at(-1).channel,prepared.bridgeKey);
+let count=emitted.length;scroll(117);assert.equal(emitted.length,count);scroll(106);assert.equal(emitted.at(-1).direction,'up');scroll(-10);assert.equal(emitted.at(-1).y,0);assert.equal(emitted.at(-1).direction,'up');
+const nested={scrollTop:75,scrollHeight:1000,clientHeight:300};listeners['doc-scroll']({target:nested});assert.equal(emitted.at(-1).direction,'down');
+scroll(500);count=emitted.length;listeners['win-resize']();scroll(400);assert.equal(emitted.length,count);clock+=300;scroll(470);assert.equal(emitted.at(-1).direction,'down');
+childDocument.body.scrollTop=180;listeners['doc-scroll']({target:childDocument.body});assert.equal(emitted.at(-1).direction,'down');listeners['win-resize']();clock+=300;childDocument.body.scrollTop=150;listeners['doc-scroll']({target:childDocument.body});assert.equal(emitted.at(-1).direction,'up');
+const frameWindow={};page.contentWindow=frameWindow;page.hidden=false;context.frameWindow=frameWindow;context.key=prepared.bridgeKey;vm.runInContext('frameKey=key;pending=null;',context);
+function parentMessage(source,channel,direction,y){context.packet={source,data:{type:'open-page-scroll',channel,direction,y}};vm.runInContext('handleFrameScroll(packet)',context);}
+parentMessage({},prepared.bridgeKey,'down',100);assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+parentMessage(frameWindow,'wrong-channel','down',100);assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+parentMessage(frameWindow,prepared.bridgeKey,'down',Infinity);assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+parentMessage(frameWindow,prepared.bridgeKey,'down',100);assert.ok(document.getElementById('chrome').classList.contains('collapsed'));
+parentMessage(frameWindow,prepared.bridgeKey,'up',80);assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+parentMessage(frameWindow,prepared.bridgeKey,'down',100);document.getElementById('expand-chrome').onclick();assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+document.getElementById('install-panel').hidden=false;parentMessage(frameWindow,prepared.bridgeKey,'down',100);assert.ok(!document.getElementById('chrome').classList.contains('collapsed'));
+console.log('Scroll checks passed: down/up thresholds, top overscroll, nested scrollers, resize feedback, trusted nonce/channel, rejected foreign messages, tap recovery, modal guard, and Save removal.');

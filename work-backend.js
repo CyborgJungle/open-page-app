@@ -104,7 +104,7 @@ async function captureArchiveToday(url, signal) {
   try {return verifiedArchiveToday(await captureLive('https://archive.today/newest/'+url,AbortSignal.any([signal,AbortSignal.timeout(12000)]),false),url);}catch{}
   signal.throwIfAborted();
   const lookup=await plainFetch('https://archive.ph/'+url,signal,false);
-  if(!lookup.response.ok){await lookup.response.body?.cancel();throw new Error('Archive.today lookup is temporarily unavailable.');}
+  if(!lookup.response.ok){const status=lookup.response.status;await lookup.response.body?.cancel();throw new Error([401,403,429].includes(status)?'Archive.today blocked the hosted lookup (HTTP '+status+').':'Archive.today lookup failed (HTTP '+status+').');}
   if(new URL(lookup.url).hostname!=='archive.ph'){await lookup.response.body?.cancel();throw new Error('Archive.today returned an unexpected lookup address.');}
   const listing=await boundedText(lookup.response,256*1024);
   let snapshotUrl;

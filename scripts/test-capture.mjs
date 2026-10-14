@@ -15,8 +15,14 @@ let scenario='live',networkCalls=[];const originalFetch=globalThis.fetch;
 globalThis.fetch=async(url,opts)=>{url=String(url);networkCalls.push(url);
 if(url.startsWith('https://cloudflare-dns.com/')){const q=new URL(url);const privateHost=q.searchParams.get('name')==='private.publisher.org';return Response.json({Status:0,Answer:q.searchParams.get('type')==='A'?[{type:1,data:privateHost?'10.1.2.3':'93.184.216.34'}]:[]});}
 if(url.endsWith('/robots.txt'))return new Response(scenario==='robots'?'User-agent: *\nDisallow: /':'User-agent: *\nAllow: /');
-if(url.startsWith('https://archive.org/wayback/available'))return Response.json({archived_snapshots:{closest:{available:true,status:'200',timestamp:'20240101010101',url:'http://web.archive.org/web/20240101010101/https://publisher.org/story'}}});
+if(url.startsWith('https://archive.org/wayback/available'))return Response.json({archived_snapshots:scenario.startsWith('today')?{}:{closest:{available:true,status:'200',timestamp:'20240101010101',url:'http://web.archive.org/web/20240101010101/https://publisher.org/story'}}});
 if(url.startsWith('https://web.archive.org/web/'))return new Response('<title>Archived story</title><main><p>A public historical snapshot with useful reading content.</p></main>',{headers:{'content-type':'text/html'}});
+if(url.startsWith('https://archive.ph/https://'))return new Response(scenario==='today-none'?'<main>No results</main>':'<a href="https://archive.ph/Ab123">13 Oct 2026</a>',{headers:{'content-type':'text/html'}});
+if(url==='https://archive.ph/Ab123'){
+ if(scenario==='today-redirect')return new Response(null,{status:302,headers:{location:'http://127.0.0.1/admin'}});
+ const page=scenario==='today-wrong'?'https://publisher.org/other':'https://publisher.org/story';
+ return new Response('<input value="http://archive.today/2026.10.13-140444/'+page+'" id="SHARE_LONGLINK"><title>Archived story</title><article>Readable public archived content.</article>',{headers:{'content-type':'text/html'}});
+}
 if(scenario==='redirect')return new Response(null,{status:302,headers:{location:'http://127.0.0.1/admin'}});
 if(scenario==='blocked')return new Response('Subscribe',{status:403});
 if(scenario==='large')return new Response('x'.repeat(2*1024*1024+1),{headers:{'content-type':'text/html'}});
@@ -28,6 +34,8 @@ async function call(mode='live',url='https://publisher.org/story'){const r=await
 try{
 let r=await call();assert.equal(r.status,200);assert.equal(r.data.sourceKind,'live');assert.equal(r.data.responseSha256,createHash('sha256').update(r.data.html).digest('hex'));
 scenario='blocked';r=await call('auto');assert.equal(r.status,200);assert.equal(r.data.sourceKind,'wayback');assert.equal(r.data.archiveTimestamp,'20240101010101');assert.match(r.data.liveError,/403/);
+scenario='today';r=await call('archive');assert.equal(r.status,200);assert.equal(r.data.sourceKind,'archive-today');assert.equal(r.data.archiveTimestamp,'20261013140444');assert.equal(r.data.archiveUrl,'https://archive.ph/Ab123');
+for(const s of ['today-wrong','today-none','today-redirect']){scenario=s;r=await call('archive');assert.equal(r.status,422,s);}
 scenario='encoding';r=await call();assert.equal(r.data.html,'café');assert.equal(r.data.responseSha256,createHash('sha256').update(Buffer.from([99,97,102,233])).digest('hex'));assert.equal(r.data.responseBytes,4);
 for(const s of ['redirect','robots','large','binary']){scenario=s;r=await call();assert.equal(r.status,422,s);}
 scenario='live';networkCalls=[];r=await call('live','https://private.publisher.org/');assert.equal(r.status,422);assert.ok(!networkCalls.some(x=>x.startsWith('https://private.publisher.org')));

@@ -7,7 +7,7 @@
     "build": "bash scripts/build.sh",
     "build:vercel": "node scripts/build-vercel.mjs",
     "validate": "node scripts/validate-artifact.mjs",
-    "test": "node scripts/test-capture.mjs && node scripts/test-snapshots.mjs && node scripts/test-webapp.mjs && node scripts/test-scroll.mjs && node scripts/test-vercel.mjs",
+    "test": "node scripts/test-capture.mjs && node scripts/test-snapshots.mjs && node scripts/test-webapp.mjs && node scripts/test-scroll.mjs && node scripts/test-auto-archive.mjs && node scripts/test-vercel.mjs",
     "dev": "node dev-server.mjs"
   },
   "devDependencies": {

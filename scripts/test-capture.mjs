@@ -17,6 +17,8 @@ if(url.startsWith('https://cloudflare-dns.com/')){const q=new URL(url);const pri
 if(url.endsWith('/robots.txt'))return new Response(scenario==='robots'?'User-agent: *\nDisallow: /':'User-agent: *\nAllow: /');
 if(url.startsWith('https://archive.org/wayback/available'))return Response.json({archived_snapshots:scenario.startsWith('today')?{}:{closest:{available:true,status:'200',timestamp:'20240101010101',url:'http://web.archive.org/web/20240101010101/https://publisher.org/story'}}});
 if(url.startsWith('https://web.archive.org/web/'))return new Response('<title>Archived story</title><main><p>A public historical snapshot with useful reading content.</p></main>',{headers:{'content-type':'text/html'}});
+if(url.startsWith('https://archive.today/newest/'))return new Response(null,{status:scenario==='today-newest'?302:403,headers:scenario==='today-newest'?{location:'https://archive.ph/Ne123'}:{}});
+if(url==='https://archive.ph/Ne123')return new Response('<input id="SHARE_LONGLINK" value="https://archive.today/2026.10.13-140444/https://publisher.org/story"><article>A readable snapshot.</article>',{headers:{'content-type':'text/html'}});
 if(url.startsWith('https://archive.ph/https://'))return new Response(scenario==='today-none'?'<main>No results</main>':'<a href="https://archive.ph/Ab123">13 Oct 2026</a>',{headers:{'content-type':'text/html'}});
 if(url==='https://archive.ph/Ab123'){
  if(scenario==='today-redirect')return new Response(null,{status:302,headers:{location:'http://127.0.0.1/admin'}});
@@ -35,7 +37,9 @@ try{
 let r=await call();assert.equal(r.status,200);assert.equal(r.data.sourceKind,'live');assert.equal(r.data.responseSha256,createHash('sha256').update(r.data.html).digest('hex'));
 scenario='blocked';r=await call('auto');assert.equal(r.status,200);assert.equal(r.data.sourceKind,'wayback');assert.equal(r.data.archiveTimestamp,'20240101010101');assert.match(r.data.liveError,/403/);
 scenario='today';r=await call('archive');assert.equal(r.status,200);assert.equal(r.data.sourceKind,'archive-today');assert.equal(r.data.archiveTimestamp,'20261013140444');assert.equal(r.data.archiveUrl,'https://archive.ph/Ab123');
-for(const s of ['today-wrong','today-none','today-redirect']){scenario=s;r=await call('archive');assert.equal(r.status,422,s);}
+scenario='today-newest';r=await call('archive');assert.equal(r.status,200);assert.equal(r.data.archiveUrl,'https://archive.ph/Ne123');
+for(const s of ['today-wrong','today-none','today-redirect']){scenario=s;r=await call('archive');assert.equal(r.status,422,s);assert.equal(r.data.archiveLookupUrl,'https://archive.today/newest/https://publisher.org/story');}
+r=await call('archive','http://127.0.0.1/');assert.equal(r.status,422);assert.equal(r.data.archiveLookupUrl,null);
 scenario='encoding';r=await call();assert.equal(r.data.html,'café');assert.equal(r.data.responseSha256,createHash('sha256').update(Buffer.from([99,97,102,233])).digest('hex'));assert.equal(r.data.responseBytes,4);
 for(const s of ['redirect','robots','large','binary']){scenario=s;r=await call();assert.equal(r.status,422,s);}
 scenario='live';networkCalls=[];r=await call('live','https://private.publisher.org/');assert.equal(r.status,422);assert.ok(!networkCalls.some(x=>x.startsWith('https://private.publisher.org')));

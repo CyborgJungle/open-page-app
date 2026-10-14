@@ -89,7 +89,20 @@ function inputValue(html, id) {
     if(attrs.id===id)return attrs.value||'';
   }return '';
 }
+function verifiedArchiveToday(content, url) {
+  if(!['archive.ph','archive.today','archive.is','archive.li'].includes(new URL(content.resolvedUrl).hostname))throw new Error('Archive.today snapshot redirected outside its archive.');
+  const longLink=inputValue(content.html,'SHARE_LONGLINK');
+  const match=longLink.match(/^https?:\/\/(?:archive\.today|archive\.ph|archive\.is|archive\.li)\/(\d{4})\.(\d{2})\.(\d{2})-(\d{6})\/(https?:\/\/.*)$/);
+  if(!match||normalizeUrl(match[5]).href!==normalizeUrl(url).href)throw new Error('Archive.today snapshot does not match the requested webpage.');
+  const timestamp=match.slice(1,5).join('');
+  const stamp=new Date(timestamp.slice(0,4)+'-'+timestamp.slice(4,6)+'-'+timestamp.slice(6,8)+'T'+timestamp.slice(8,10)+':'+timestamp.slice(10,12)+':'+timestamp.slice(12,14)+'Z');
+  if(!Number.isFinite(stamp.getTime()))throw new Error('Archive.today snapshot has an invalid capture date.');
+  return {...content,sourceKind:'archive-today',archiveTimestamp:timestamp,archiveUrl:content.resolvedUrl};
+}
 async function captureArchiveToday(url, signal) {
+  // The archive documents /newest/ as a link to an existing latest snapshot.
+  try {return verifiedArchiveToday(await captureLive('https://archive.today/newest/'+url,AbortSignal.any([signal,AbortSignal.timeout(12000)]),false),url);}catch{}
+  signal.throwIfAborted();
   const lookup=await plainFetch('https://archive.ph/'+url,signal,false);
   if(!lookup.response.ok){await lookup.response.body?.cancel();throw new Error('Archive.today lookup is temporarily unavailable.');}
   if(new URL(lookup.url).hostname!=='archive.ph'){await lookup.response.body?.cancel();throw new Error('Archive.today returned an unexpected lookup address.');}
@@ -100,14 +113,7 @@ async function captureArchiveToday(url, signal) {
   }
   if(!snapshotUrl)throw new Error('No publicly accessible Archive.today snapshot was found.');
   const content=await captureLive(snapshotUrl,signal,false);
-  if(new URL(content.resolvedUrl).hostname!=='archive.ph')throw new Error('Archive.today snapshot redirected outside its archive.');
-  const longLink=inputValue(content.html,'SHARE_LONGLINK');
-  const match=longLink.match(/^https?:\/\/(?:archive\.today|archive\.ph)\/(\d{4})\.(\d{2})\.(\d{2})-(\d{6})\/(https?:\/\/.*)$/);
-  if(!match||normalizeUrl(match[5]).href!==normalizeUrl(url).href)throw new Error('Archive.today snapshot does not match the requested webpage.');
-  const timestamp=match.slice(1,5).join('');
-  const stamp=new Date(timestamp.slice(0,4)+'-'+timestamp.slice(4,6)+'-'+timestamp.slice(6,8)+'T'+timestamp.slice(8,10)+':'+timestamp.slice(10,12)+':'+timestamp.slice(12,14)+'Z');
-  if(!Number.isFinite(stamp.getTime()))throw new Error('Archive.today snapshot has an invalid capture date.');
-  return {...content,sourceKind:'archive-today',archiveTimestamp:timestamp,archiveUrl:content.resolvedUrl};
+  return verifiedArchiveToday(content,url);
 }
 async function capturePublicArchive(url, signal) {
   let waybackError;
@@ -128,14 +134,16 @@ export default {
       if(request.method!=='POST')return json({error:'Use POST to capture a page.'},405);
       const origin=request.headers.get('origin');if(origin&&origin!==new URL(request.url).origin)return json({error:'Capture requests must come from this site.'},403);
       if(!/application\/json/i.test(request.headers.get('content-type')||''))return json({error:'Send a JSON request.'},415);
+      let archiveLookupUrl=null;
       try {
         const body=JSON.parse(await boundedText(request,16*1024));const u=normalizeUrl(body.url);const mode=['auto','live','wayback','archive'].includes(body.mode)?body.mode:'auto';
+        archiveLookupUrl='https://archive.today/newest/'+u.href;
         let result,liveError=null;const archiveSignal=()=>AbortSignal.timeout(35000);
         if(mode==='wayback')result=await captureArchive(u.href,archiveSignal());
         else if(mode==='archive')result=await capturePublicArchive(u.href,archiveSignal());
         else { try{result={...await captureLive(u.href,AbortSignal.timeout(20000)),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await capturePublicArchive(u.href,archiveSignal());}catch(a){throw new Error(liveError+' '+a.message);}} }
         return json({...result,sourceUrl:u.href,capturedAt:new Date().toISOString(),liveError});
-      }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out. Try the archived-copy source.':e.message||'Capture failed.'},422);}
+      }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out.':e.message||'Capture failed.',archiveLookupUrl},422);}
     }
     if(path!=='/')return new Response('Not found',{status:404,headers});
     return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; style-src 'unsafe-inline' https: http:; connect-src 'self'; img-src https: http: data:; font-src https: http: data:; media-src https: http:; frame-src 'self'; base-uri https: http:; frame-ancestors 'none'; form-action 'none'"}});

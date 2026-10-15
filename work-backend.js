@@ -146,6 +146,6 @@ export default {
       }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out.':e.message||'Capture failed.',archiveLookupUrl},422);}
     }
     if(path!=='/')return new Response('Not found',{status:404,headers});
-    return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; style-src 'unsafe-inline' https: http:; connect-src 'self'; img-src https: http: data:; font-src https: http: data:; media-src https: http:; frame-src 'self'; base-uri https: http:; frame-ancestors 'none'; form-action 'none'"}});
+    return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; style-src 'unsafe-inline' https: http:; connect-src 'self' https://archive.ph https://archive.today https://archive.is https://archive.li; img-src https: http: data:; font-src https: http: data:; media-src https: http:; frame-src 'self'; base-uri https: http:; frame-ancestors 'none'; form-action 'none'"}});
   }
 };

@@ -11,11 +11,37 @@
 <script>
 'use strict';const $=id=>document.getElementById(id);let pending=null,installPrompt=null,frameKey='',chromeCollapsed=false;
 function message(text,error=false){const status=$('status');status.textContent=text;status.classList.toggle('error',error);status.hidden=!text;if(error)setChromeCollapsed(false);syncChromeHeight();}
-function openPublicArchive(archiveLookupUrl,sourceUrl){
-if(!archiveLookupUrl)return false;
-try{const source=new URL(/^https?:\/\//i.test(sourceUrl.trim())?sourceUrl.trim():'https://'+sourceUrl.trim());source.hash='';const target=new URL(archiveLookupUrl);if(target.href!=='https://archive.today/newest/'+source.href)return false;message('');location.assign(target.href);return true;}catch{return false;}
-}
 async function request(url,mode,signal){const r=await fetch('/api/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,mode}),signal});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Could not open this page.');error.archiveLookupUrl=d.archiveLookupUrl;throw error;}return d;}
+async function readBrowserArchive(response){
+const limit=2*1024*1024;if(Number(response.headers.get('content-length'))>limit){if(response.body)await response.body.cancel();throw new Error('Archive is too large.');}
+if(!response.body||!response.body.getReader){const text=await response.text();if(new TextEncoder().encode(text).length>limit)throw new Error('Archive is too large.');return text;}
+const reader=response.body.getReader(),chunks=[];let size=0;
+try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>limit)throw new Error('Archive is too large.');chunks.push(part.value);}}catch(error){await reader.cancel();throw error;}
+const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return new TextDecoder().decode(bytes);
+}
+async function browserArchive(lookupUrl,requestedUrl,signal){
+const source=new URL(/^https?:\/\//i.test(requestedUrl.trim())?requestedUrl.trim():'https://'+requestedUrl.trim());source.hash='';
+if(lookupUrl!=='https://archive.today/newest/'+source.href)throw new Error('Unexpected archive source.');
+const controller=new AbortController();let timedOut=false;const abort=()=>controller.abort();
+if(signal.aborted)controller.abort();else signal.addEventListener('abort',abort,{once:true});
+const timeout=setTimeout(()=>{timedOut=true;controller.abort();},20000);
+try{
+const response=await fetch('https://archive.ph/newest/'+source.href,{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
+if(!response.ok)throw new Error('Archive unavailable.');
+const resolved=new URL(response.url);if(resolved.protocol!=='https:'||!['archive.ph','archive.today','archive.is','archive.li'].includes(resolved.hostname)||resolved.username||resolved.password||resolved.port)throw new Error('Unexpected archive host.');
+if(!/text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type')||''))throw new Error('Archive is not a webpage.');
+const html=await readBrowserArchive(response),doc=new DOMParser().parseFromString(html,'text/html');
+const marker=doc.getElementById('SHARE_LONGLINK'),longLink=marker&&marker.getAttribute('value');
+const match=longLink&&longLink.match(/^https?:\/\/(?:archive\.today|archive\.ph|archive\.is|archive\.li)\/(\d{4})\.(\d{2})\.(\d{2})-(\d{6})\/(https?:\/\/.*)$/);
+if(!match||new URL(match[5]).href!==source.href)throw new Error('Archive does not match this page.');
+const timestamp=match.slice(1,5).join('');const date=new Date(timestamp.slice(0,4)+'-'+timestamp.slice(4,6)+'-'+timestamp.slice(6,8)+'T'+timestamp.slice(8,10)+':'+timestamp.slice(10,12)+':'+timestamp.slice(12,14)+'Z');
+if(!Number.isFinite(date.getTime()))throw new Error('Invalid archive date.');
+return {html,sourceUrl:source.href,resolvedUrl:resolved.href,sourceKind:'archive-today',archiveTimestamp:timestamp,archiveUrl:resolved.href,contentType:'text/html'};
+}catch(error){console.warn('Archive fetch failed:',timedOut?'Request timed out.':error.message);if(timedOut)throw new Error('Archive timed out.');throw error;}finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
+}
+async function requestInApp(url,mode,signal){
+try{return await request(url,mode,signal);}catch(error){if(error.name==='AbortError'||!error.archiveLookupUrl)throw error;return browserArchive(error.archiveLookupUrl,url,signal);}
+}
 function articleHints(doc){let restricted=false,expected=0;function visit(value,depth=0){if(!value||typeof value!=='object'||depth>12)return;if(Array.isArray(value)){for(const item of value)visit(item,depth+1);return;}const types=[].concat(value['@type']||[]);if(types.some(t=>/^(?:NewsArticle|Article|BlogPosting|ReportageNewsArticle)$/.test(String(t)))){if(value.isAccessibleForFree===false||value.isAccessibleForFree==='false')restricted=true;const count=Number(value.wordCount);if(Number.isFinite(count)&&count>0&&count<100000)expected=Math.max(expected,count);if(typeof value.articleBody==='string')expected=Math.max(expected,value.articleBody.trim().split(/\s+/).length);}for(const key of ['@graph','mainEntity','hasPart'])if(value[key])visit(value[key],depth+1);}
 for(const node of doc.querySelectorAll('script[type="application/ld+json"]')){try{visit(JSON.parse(node.textContent));}catch{}}
 for(const node of doc.querySelectorAll('[itemprop="isAccessibleForFree"]'))if((node.getAttribute('content')||node.textContent).trim()==='false')restricted=true;
@@ -58,12 +84,11 @@ const ref=doc.createElement('meta');ref.name='referrer';ref.content='no-referrer
 if(!doc.querySelector('meta[name="viewport"]')){const v=doc.createElement('meta');v.name='viewport';v.content='width=device-width,initial-scale=1';doc.head.append(v);}
 const bridge=doc.createElement('script');bridge.setAttribute('nonce',bridgeKey);bridge.textContent='('+frameScrollBridge.toString()+')('+JSON.stringify(bridgeKey)+');';doc.body.append(bridge);
 return {title,html:'<!doctype html>\n'+doc.documentElement.outerHTML,bridgeKey};}
-$('open-form').onsubmit=async e=>{e.preventDefault();setChromeCollapsed(false);if(typeof navigator!=='undefined'&&navigator.onLine===false){message('You are offline.',true);return;}$('url').blur();if(pending)pending.abort();pending=new AbortController();const control=pending,requestedUrl=$('url').value.trim();$('open').disabled=true;$('open').textContent='Opening…';message('');try{let d=await request(requestedUrl,'auto',control.signal);if(pending!==control)return;let info=inspect(d);if(d.sourceKind==='live'&&(info.limited||info.words<10)){try{const archived=await request(d.sourceUrl,'archive',control.signal);const candidate=inspect(archived);if(candidate.words>info.words&&!candidate.limited&&!candidate.blocked){d=archived;info=candidate;}}catch(e){if(e.name==='AbortError')throw e;}}
+$('open-form').onsubmit=async e=>{e.preventDefault();setChromeCollapsed(false);if(typeof navigator!=='undefined'&&navigator.onLine===false){message('You are offline.',true);return;}$('url').blur();if(pending)pending.abort();pending=new AbortController();const control=pending,requestedUrl=$('url').value.trim();$('open').disabled=true;$('open').textContent='Opening…';message('');try{let d=await requestInApp(requestedUrl,'auto',control.signal);if(pending!==control)return;let info=inspect(d);if(d.sourceKind==='live'&&(info.limited||info.words<10)){try{const archived=await requestInApp(d.sourceUrl,'archive',control.signal);const candidate=inspect(archived);if(candidate.words>info.words&&!candidate.limited&&!candidate.blocked){d=archived;info=candidate;}}catch(e){if(e.name==='AbortError')throw e;}}
 if(pending!==control)return;
-if((info.limited||info.blocked)&&openPublicArchive('https://archive.today/newest/'+d.sourceUrl,requestedUrl))return;
-if(info.blocked)throw new Error('Could not open this page.');
+if(info.limited||info.blocked)throw new Error('Could not load this page.');
 const visual=prepare(d);frameKey=visual.bridgeKey;$('compact-source').textContent=new URL(d.sourceUrl).hostname;$('page').srcdoc=visual.html;$('page').hidden=false;$('empty').hidden=true;$('actions').hidden=false;$('original').href=d.sourceUrl;document.title=visual.title+' · Open Page';let summary='';if(d.sourceKind==='wayback'||d.sourceKind==='archive-today'){const t=d.archiveTimestamp;summary='Archived · '+t.slice(0,4)+'-'+t.slice(4,6)+'-'+t.slice(6,8);}message(summary);}
-catch(e){if(pending===control&&e.name!=='AbortError'&&!openPublicArchive(e.archiveLookupUrl,requestedUrl))message(e.message&&e.message.length<=100?e.message:'Could not open this page.',true);}finally{if(pending===control){$('open').disabled=false;$('open').textContent='Open →';pending=null;}}};
+catch(e){if(pending===control&&e.name!=='AbortError')message('Could not load this page.',true);}finally{if(pending===control){$('open').disabled=false;$('open').textContent='Open →';pending=null;}}};
 function closeInstall(){$('install-panel').hidden=true;$('install').focus();}
 $('install').onclick=async()=>{setChromeCollapsed(false);if(installPrompt){const prompt=installPrompt;installPrompt=null;await prompt.prompt();return;}$('install-text').textContent=/iPad|iPhone|iPod/.test(navigator.userAgent)?'In Safari, tap Share, then Add to Home Screen.':'Open your browser menu and choose Install app or Add to Home Screen.';$('install-panel').hidden=false;$('close-install').focus();};
 $('close-install').onclick=closeInstall;$('install-panel').onclick=e=>{if(e.target===$('install-panel'))closeInstall();};

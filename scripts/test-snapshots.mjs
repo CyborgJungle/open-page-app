@@ -19,6 +19,30 @@ info=run('<html><body><article><div class="article__body"><p>Subscribe to contin
 info=run('<html><body><article>Dit artikel is alleen voor abonnees. Log in om dit artikel te lezen.</article></body></html>','inspect');assert.equal(info.limited,true);
 context.input={html:'<html><head><title>Archived article</title></head><body><div id="HEADER">Archive navigation</div><div id="CONTENT"><article><h1>Archived article</h1><p>Retain the article.</p><img src="/Ab123/image.jpg"></article></div><footer>Archive controls</footer></body></html>',contentType:'text/html',sourceKind:'archive-today',sourceUrl:'https://publisher.org/story',resolvedUrl:'https://archive.ph/Ab123'};
 r=vm.runInContext('prepare(input)',context);parsed=new DOMParser().parseFromString(r.html,'text/html');assert.equal(parsed.querySelector('#HEADER'),null);assert.equal(parsed.querySelector('footer'),null);assert.equal(parsed.querySelector('article img').getAttribute('src'),'https://archive.ph/Ab123/image.jpg');assert.equal(parsed.querySelector('h1').textContent,'Archived article');
+const frozen=await readFile(new URL('../fixtures/archive-layout.html',import.meta.url),'utf8');
+context.input.html=frozen;
+r=vm.runInContext('prepare(input)',context);parsed=new DOMParser().parseFromString(r.html,'text/html');
+assert.equal(parsed.querySelector('#CONTENT').style.width,'100%');
+assert.equal(parsed.querySelector('#CONTENT').style.maxWidth,'1024px');
+assert.equal(parsed.querySelector('#CONTENT').style.margin,'0 auto');
+assert.equal(parsed.body.style.background,'#fff');
+assert.equal(parsed.querySelector('#archive-helper'),null);
+assert.equal(parsed.querySelector('#article_paragraph_3'),null);
+assert.ok(parsed.querySelector('#before-ad').textContent.includes('saved webpage'));
+assert.ok(parsed.querySelector('#after-ad').textContent.includes('surrounding paragraphs'));
+assert.equal(parsed.querySelector('.body').style.minHeight,'0');
+assert.equal(parsed.querySelector('#frozen-grid').style.gridTemplateColumns,'minmax(0,1fr)');
+assert.ok(parsed.querySelector('.ad-container img'));
+assert.ok(parsed.querySelector('figure img').getAttribute('src').startsWith('data:image/'));
+assert.match(parsed.querySelector('[data-open-page-layout]').textContent,/min-width:0!important;height:auto!important/);
+assert.equal(parsed.querySelector('h1').textContent,'Archived pages should fit the screen');
+// A translated label must not remove a real illustration or nearby prose.
+r=run('<html><body><main><article><div id="empty-ad"><span>Advertentie</span></div><div id="pictured-ad">Advertentie<img src="/sponsor.jpg"></div><div id="text-ad">Advertentie: a discussion about advertising.</div><div class="ad-container" style="background-image:url(/sponsor.jpg)"></div></article></main></body></html>');
+parsed=new DOMParser().parseFromString(r.html,'text/html');
+assert.equal(parsed.querySelector('#empty-ad'),null);
+assert.ok(parsed.querySelector('#pictured-ad img'));
+assert.ok(parsed.querySelector('#text-ad'));
+assert.ok(parsed.querySelector('.ad-container'));
 try {
 const wired=await readFile(new URL('../fixtures/wired-source.html',import.meta.url),'utf8');const original=new DOMParser().parseFromString(wired,'text/html');r=run(wired);parsed=new DOMParser().parseFromString(r.html,'text/html');assert.ok(original.querySelector('[data-testid="sticky-hero-ad"]'));assert.equal(parsed.querySelector('[data-testid="sticky-hero-ad"]'),null);assert.equal(parsed.querySelector('.ad-stickyhero'),null);assert.equal(parsed.querySelector('.article__body').textContent,original.querySelector('.article__body').textContent);assert.equal(parsed.querySelector('h1').textContent,original.querySelector('h1').textContent);console.log('Live WIRED fixture passed: empty sticky ad removed; article text, heading, and styles retained.');
 } catch (error) { if(error.code!=='ENOENT')throw error; }

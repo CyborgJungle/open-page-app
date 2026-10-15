@@ -48,7 +48,40 @@ for(const node of doc.querySelectorAll('[itemprop="isAccessibleForFree"]'))if((n
 return {restricted,expected};}
 const ARTICLE_SELECTORS='[itemprop="articleBody"],.article__body,.body__inner-container,[data-testid="article-body"],.article-body-content,.story-body,article .entry-content';
 function inspect(d){if(/text\/plain/.test(d.contentType))return {words:d.html.trim().split(/\s+/).length,limited:false,blocked:false};const doc=new DOMParser().parseFromString(d.html,'text/html');const hints=articleHints(doc);doc.querySelectorAll('script,style,noscript,nav,header,footer,aside,[role="navigation"]').forEach(n=>n.remove());const specific=[...doc.querySelectorAll(ARTICLE_SELECTORS)].sort((a,b)=>b.textContent.length-a.textContent.length)[0];const root=specific||doc.querySelector('article')||doc.querySelector('main')||doc.body;const text=root.textContent.replace(/\s+/g,' ').trim();const words=text?text.split(/\s+/).length:0;const notice=/subscribe to (?:continue|read|unlock)|already a subscriber|subscription required|subscriber[ -]only|sign in to (?:continue|read)|unlock this article|purchase a subscription|alleen voor (?:abonnees|leden)|(?:abonneer|log in) om (?:verder|dit artikel) te lezen/i.test(text);const blocked=words<300&&(/(?:checking|verify) (?:your )?browser|enable javascript and cookies|verify (?:you are|you're) human|access denied|captcha/i.test(text)||!!doc.querySelector('#challenge-form,#cf-challenge-running,.g-recaptcha'));const limited=blocked||notice&&words<600||hints.restricted&&words<300||hints.expected>=150&&words<hints.expected*.6;return {words,limited,blocked,restricted:hints.restricted,expectedWords:hints.expected};}
-function removeEmptyAds(doc){const selectors='[data-testid="sticky-hero-ad"],.ad-stickyhero,[class*="StickyHeroAdWrapper-"],[class*="AdWrapper-"],.ad,.ad-slot,.ad-container,[data-ad-slot],[data-ad-unit],[id^="google_ads_iframe"],ins.adsbygoogle';for(const slot of [...doc.querySelectorAll(selectors)]){const text=slot.textContent.replace(/\s+/g,' ').trim();const meaningfulText=text&&!/^(?:advertisement|advertising|ad|sponsored|sponsor message)$/i.test(text);const meaningfulMedia=slot.querySelector('img[src],picture,video,svg');if(!meaningfulText&&!meaningfulMedia)slot.remove();}}
+function removeEmptyAds(doc){
+const selectors='[data-testid="sticky-hero-ad"],.ad-stickyhero,[class*="StickyHeroAdWrapper-"],[class*="AdWrapper-"],.ad,.ad-slot,.ad-container,[data-ad-slot],[data-ad-unit],[id^="google_ads_iframe"],[id^="article_paragraph_"],[id^="article_sky_"],ins.adsbygoogle';
+const label=/^(?:advertisement|advertising|ad|advertentie|advertenties|publicité|anzeige|sponsored|sponsor message)[:.]?$/i;
+function hasMedia(node){return node.querySelector('img[src],img[srcset],picture,video,audio,svg,canvas,[style*="url("]')||/url\s*\(/i.test(node.getAttribute('style')||'');}
+for(const slot of [...doc.querySelectorAll(selectors)]){const text=slot.textContent.replace(/\s+/g,' ').trim();if((!text||label.test(text))&&!hasMedia(slot))slot.remove();}
+// Frozen archives often discard ad classes, leaving only a translated label.
+for(const slot of [...doc.querySelectorAll('article div,article aside,article section,main div,main aside')]){const text=slot.textContent.replace(/\s+/g,' ').trim();if(label.test(text)&&!slot.querySelector('article,h1,h2,h3')&&!hasMedia(slot))slot.remove();}
+}
+function reflowArchive(doc){
+const content=doc.getElementById('CONTENT');if(!content)return;
+const width=parseFloat(content.style.width);const maxWidth=Number.isFinite(width)&&width>=320&&width<=2400?width:1200;
+doc.documentElement.style.cssText+=';margin:0;min-width:0;background:#fff;';
+doc.body.style.cssText+=';margin:0;min-width:0;background:#fff;';
+content.style.cssText+=';border:0;margin:0 auto;width:100%;max-width:'+maxWidth+'px;min-width:0;min-height:0;box-sizing:border-box;overflow-x:hidden;';
+const frozen=[...content.children].find(node=>node.classList.contains('html1'));if(frozen){content.textContent='';content.append(frozen);}
+const article=content.querySelector('article');
+const roots=article?[...content.querySelectorAll('article')]:[content.querySelector('main')].filter(Boolean);
+if(!roots.length)content.style.overflowX='auto';
+for(const root of roots){
+root.setAttribute('data-open-page-article','');
+for(let node=root;node&&node!==content;node=node.parentElement){node.style.cssText+=';min-width:0;max-width:100%;height:auto;min-height:0;box-sizing:border-box;';if(node!==root){node.style.width='100%';node.style.overflow='visible';if(node.style.display==='grid'&&/^\d+(?:\.\d+)?px$/.test(node.style.gridTemplateColumns.trim()))node.style.gridTemplateColumns='minmax(0,1fr)';}}
+}
+const style=doc.createElement('style');style.setAttribute('data-open-page-layout','');style.textContent=`
+#CONTENT [data-open-page-article]{overflow-wrap:break-word}
+#CONTENT [data-open-page-article] img,#CONTENT [data-open-page-article] video{max-width:100%!important;min-width:0!important;height:auto!important;min-height:0!important}
+@media(max-width:700px){
+#CONTENT [data-open-page-article]{padding-left:16px!important;padding-right:16px!important}
+#CONTENT [data-open-page-article] div,#CONTENT [data-open-page-article] section,#CONTENT [data-open-page-article] header,#CONTENT [data-open-page-article] figure{max-width:100%!important;min-width:0!important;box-sizing:border-box}
+#CONTENT [data-open-page-article] figure{margin-left:0!important;margin-right:0!important}
+#CONTENT [data-open-page-article] h1{font-size:32px!important;line-height:1.12!important;overflow-wrap:break-word}
+#CONTENT [data-open-page-article] pre,#CONTENT [data-open-page-article] table{display:block;max-width:100%!important;overflow-x:auto}
+}
+`;doc.head.append(style);
+}
 function resolveSrcset(value,base){let index=0;const candidates=[];while(index<value.length){while(index<value.length&&/[\s,]/.test(value[index]))index++;const start=index;while(index<value.length&&!/\s/.test(value[index]))index++;let url=value.slice(start,index);let descriptors='';if(url.endsWith(',')){url=url.replace(/,+$/,'');}else{while(index<value.length&&/\s/.test(value[index]))index++;const begin=index;while(index<value.length&&value[index]!==',')index++;descriptors=value.slice(begin,index).trim();if(value[index]===',')index++;}if(!url)continue;try{const target=new URL(url,base);if(['http:','https:'].includes(target.protocol)||/^data:image\//i.test(url))candidates.push(target.href+(descriptors?' '+descriptors:''));}catch{}}return candidates.join(', ');}
 function scrollKey(){const bytes=new Uint8Array(18);crypto.getRandomValues(bytes);return Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');}
 function frameScrollBridge(channel){
@@ -72,6 +105,7 @@ if(doc.body)doc.body.style.overflow='auto';
 // The snapshot is isolated; keep static presentation and remove executable content.
 doc.querySelectorAll('script,noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv],link[rel="preload"][as="script"],link[rel="modulepreload"],#wm-ipp-base').forEach(n=>n.remove());
 removeEmptyAds(doc);
+if(d.sourceKind==='archive-today')reflowArchive(doc);
 for(const el of doc.querySelectorAll('*')){for(const a of [...el.attributes]){if(/^on/i.test(a.name)||['srcdoc','nonce','integrity'].includes(a.name.toLowerCase()))el.removeAttribute(a.name);}
 for(const attr of ['href','src','action','formaction','poster','data','xlink:href']){const value=el.getAttribute(attr);if(!value)continue;try{const target=new URL(value,d.sourceKind==='wayback'?d.sourceUrl:d.resolvedUrl);if(['http:','https:'].includes(target.protocol)||attr==='src'&&/^data:image\//i.test(value))el.setAttribute(attr,target.href);else if(attr==='href'&&value.startsWith('#'))el.setAttribute(attr,value);else el.removeAttribute(attr);}catch{el.removeAttribute(attr);}}
 const srcsetAttr=[...el.attributes].find(a=>a.name.toLowerCase()==='srcset');if(srcsetAttr){const value=srcsetAttr.value;el.removeAttribute(srcsetAttr.name);el.setAttribute('srcset',resolveSrcset(value,d.sourceKind==='wayback'?d.sourceUrl:d.resolvedUrl));}

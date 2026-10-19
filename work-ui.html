@@ -47,7 +47,8 @@ $('page').onload=syncArticleTheme;syncArticleTheme();
 function message(text,error=false){const status=$('status');status.textContent=text;status.classList.toggle('error',error);status.hidden=!text;if(error)setChromeCollapsed(false);syncChromeHeight();}
 async function request(url,mode,signal){const r=await fetch('/api/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,mode}),signal});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Could not open this page.');error.archiveLookupUrl=d.archiveLookupUrl;throw error;}return d;}
 async function readBrowserArchive(response){
-const limit=2*1024*1024;if(Number(response.headers.get('content-length'))>limit){if(response.body)await response.body.cancel();throw new Error('Archive is too large.');}
+// Frozen layout markup can be much larger than the original article HTML.
+const limit=8*1024*1024;if(Number(response.headers.get('content-length'))>limit){if(response.body)await response.body.cancel();throw new Error('Archive is too large.');}
 if(!response.body||!response.body.getReader){const text=await response.text();if(new TextEncoder().encode(text).length>limit)throw new Error('Archive is too large.');return text;}
 const reader=response.body.getReader(),chunks=[];let size=0;
 try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>limit)throw new Error('Archive is too large.');chunks.push(part.value);}}catch(error){await reader.cancel();throw error;}

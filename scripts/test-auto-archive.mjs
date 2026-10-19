@@ -12,8 +12,9 @@ const article='<article><h1>Research page</h1><p>'+('Readable public content. '.
 function archiveResponse(){
  const original=scenario==='wrong-source'?'https://other.org/story':sourceUrl;
  let html='<input id="SHARE_LONGLINK" value="https://archive.today/2026.10.13-140444/'+original+'"><div id="CONTENT">'+article+'<script>untrustedPublisherScript()</script></div>';
+ if(scenario==='large-readable')html+='<!--'+('Archived layout metadata. '.repeat(180000))+'-->';
  if(scenario==='challenge')html='<h1>Verify you are human</h1><div id="challenge-form"></div>';
- if(scenario==='large')html='x'.repeat(2*1024*1024+1);
+ if(scenario==='large')html='x'.repeat(8*1024*1024+1);
  const response=new Response(html,{status:scenario==='browser-blocked'?429:200,headers:{'content-type':'text/html'}});
  Object.defineProperty(response,'url',{value:'https://archive.ph/Ab123'});return response;
 }
@@ -33,10 +34,20 @@ async function submit(){await document.getElementById('open-form').onsubmit({pre
 
 await submit();assert.equal(document.getElementById('page').hidden,false);assert.equal(document.getElementById('status').textContent,'Archived · 2026-10-13');assert.match(document.getElementById('page').srcdoc,/Research page/);assert.ok(!document.getElementById('page').srcdoc.includes('untrustedPublisherScript'));
 assert.equal(browserCalls[0].url,'https://archive.ph/newest/'+sourceUrl);assert.equal(browserCalls[0].options.credentials,'omit');assert.equal(browserCalls[0].options.mode,'cors');
+scenario='large-readable';await submit();assert.equal(document.getElementById('status').textContent,'Archived · 2026-10-13');assert.ok(document.getElementById('page').srcdoc.includes('Research page'));
 scenario='partial';calls.length=0;await submit();assert.deepEqual(calls,['auto','archive']);assert.equal(document.getElementById('status').textContent,'Archived · 2026-10-13');
 for(const value of ['unsafe','wrong-source','challenge','large','browser-blocked']){scenario=value;const previous=document.getElementById('page').srcdoc;await submit();assert.equal(document.getElementById('status').textContent,'Could not load this page.');assert.equal(document.getElementById('page').srcdoc,previous);}
 const attempts=browserCalls.length;scenario='readable';await submit();assert.equal(browserCalls.length,attempts);assert.equal(document.getElementById('status').hidden,true);
 scenario='archived';await submit();assert.equal(browserCalls.length,attempts);assert.equal(document.getElementById('page').hidden,false);assert.equal(document.getElementById('status').textContent,'Archived · 2026-10-13');
 scenario='abort';await submit();assert.equal(browserCalls.length,attempts);assert.equal(document.getElementById('status').hidden,true);
 assert.ok(!/location\.(?:assign|replace)|window\.open\(/.test(ui));
+// Enforce the expanded archive budget in bytes on every supported read path.
+const largeText='é'.repeat(2200000);
+assert.equal(await context.readBrowserArchive(new Response(largeText)),largeText);
+let canceled=false;
+await assert.rejects(context.readBrowserArchive({headers:new Headers({'content-length':String(8*1024*1024+1)}),body:{cancel:async()=>{canceled=true;}}}),/too large/);
+assert.equal(canceled,true);
+const oldBrowserResponse=text=>({headers:new Headers(),body:null,text:async()=>text});
+assert.equal(await context.readBrowserArchive(oldBrowserResponse(largeText)),largeText);
+await assert.rejects(context.readBrowserArchive(oldBrowserResponse('é'.repeat(4*1024*1024+1))),/too large/);
 console.log('Archive containment checks passed: browser CORS capture renders beneath the toolbar without navigation or cookies, readable/server-archived pages stay in the app, and blocked/challenge/mismatched/oversize responses are rejected.');

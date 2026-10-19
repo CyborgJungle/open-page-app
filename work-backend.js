@@ -138,10 +138,11 @@ export default {
       try {
         const body=JSON.parse(await boundedText(request,16*1024));const u=normalizeUrl(body.url);const mode=['auto','live','wayback','archive'].includes(body.mode)?body.mode:'auto';
         archiveLookupUrl='https://archive.today/newest/'+u.href;
-        let result,liveError=null;const archiveSignal=()=>AbortSignal.timeout(35000);
+        const budget=AbortSignal.any([request.signal,AbortSignal.timeout(24000)]);budget.throwIfAborted();
+        let result,liveError=null;const archiveSignal=()=>AbortSignal.any([budget,AbortSignal.timeout(18000)]);
         if(mode==='wayback')result=await captureArchive(u.href,archiveSignal());
         else if(mode==='archive')result=await capturePublicArchive(u.href,archiveSignal());
-        else { try{result={...await captureLive(u.href,AbortSignal.timeout(20000)),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await capturePublicArchive(u.href,archiveSignal());}catch(a){throw new Error(liveError+' '+a.message);}} }
+        else { try{result={...await captureLive(u.href,AbortSignal.any([budget,AbortSignal.timeout(6000)])),sourceKind:'live',archiveTimestamp:null,archiveUrl:null};}catch(e){liveError=e.message;if(mode==='live')throw e;try{result=await capturePublicArchive(u.href,archiveSignal());}catch(a){throw new Error(liveError+' '+a.message);}} }
         return json({...result,sourceUrl:u.href,capturedAt:new Date().toISOString(),liveError});
       }catch(e){return json({error:e.name==='TimeoutError'||e.name==='AbortError'?'Capture timed out.':e.message||'Capture failed.',archiveLookupUrl},422);}
     }

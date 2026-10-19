@@ -45,7 +45,7 @@ if(frameKey&&$('page').contentWindow)$('page').contentWindow.postMessage({type:'
 $('article-theme').onclick=()=>{articleDark=!articleDark;try{localStorage.setItem('open-page-article-dark',String(articleDark));}catch{}syncArticleTheme();};
 $('page').onload=syncArticleTheme;syncArticleTheme();
 function message(text,error=false){const status=$('status');status.textContent=text;status.classList.toggle('error',error);status.hidden=!text;if(error)setChromeCollapsed(false);syncChromeHeight();}
-async function request(url,mode,signal){const r=await fetch('/api/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,mode}),signal});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Could not open this page.');error.archiveLookupUrl=d.archiveLookupUrl;throw error;}return d;}
+async function request(url,mode,signal){const r=await fetch('/api/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,mode}),signal});const d=await r.json();if(!r.ok){const error=new Error(d.error||'Could not open this page.');error.archiveLookupUrl=d.archiveLookupUrl;error.archiveBusy=/Archive.today.*HTTP 429/.test(d.error||'');throw error;}return d;}
 async function readBrowserArchive(response){
 // Frozen layout markup can be much larger than the original article HTML.
 const limit=8*1024*1024;if(Number(response.headers.get('content-length'))>limit){if(response.body)await response.body.cancel();throw new Error('Archive is too large.');}
@@ -62,7 +62,7 @@ if(signal.aborted)controller.abort();else signal.addEventListener('abort',abort,
 const timeout=setTimeout(()=>{timedOut=true;controller.abort();},20000);
 try{
 const response=await fetch('https://archive.ph/newest/'+source.href,{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
-if(!response.ok)throw new Error('Archive unavailable.');
+if(!response.ok){const error=new Error('Archive unavailable (HTTP '+response.status+').');error.archiveBusy=response.status===429;throw error;}
 const resolved=new URL(response.url);if(resolved.protocol!=='https:'||!['archive.ph','archive.today','archive.is','archive.li'].includes(resolved.hostname)||resolved.username||resolved.password||resolved.port)throw new Error('Unexpected archive host.');
 if(!/text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type')||''))throw new Error('Archive is not a webpage.');
 const html=await readBrowserArchive(response),doc=new DOMParser().parseFromString(html,'text/html');
@@ -72,10 +72,29 @@ if(!match||new URL(match[5]).href!==source.href)throw new Error('Archive does no
 const timestamp=match.slice(1,5).join('');const date=new Date(timestamp.slice(0,4)+'-'+timestamp.slice(4,6)+'-'+timestamp.slice(6,8)+'T'+timestamp.slice(8,10)+':'+timestamp.slice(10,12)+':'+timestamp.slice(12,14)+'Z');
 if(!Number.isFinite(date.getTime()))throw new Error('Invalid archive date.');
 return {html,sourceUrl:source.href,resolvedUrl:resolved.href,sourceKind:'archive-today',archiveTimestamp:timestamp,archiveUrl:resolved.href,contentType:'text/html'};
-}catch(error){console.warn('Archive fetch failed:',timedOut?'Request timed out.':error.message);if(timedOut)throw new Error('Archive timed out.');throw error;}finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
+}catch(error){if(error.name!=='AbortError'||timedOut)console.warn('Archive fetch failed:',timedOut?'Request timed out.':error.message);if(timedOut)throw new Error('Archive timed out.');throw error;}finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
+}
+function archiveLookupFor(value){
+const source=new URL(/^https?:\/\//i.test(value.trim())?value.trim():'https://'+value.trim());const host=source.hostname.toLowerCase();
+if(!['http:','https:'].includes(source.protocol)||source.username||source.password||source.port&&!['80','443'].includes(source.port)||!host.includes('.')||host.endsWith('.')||host.includes(':')||/^[\d.]+$/.test(host)||/(?:^|\.)(localhost|local|internal|lan|test|invalid|example)$/.test(host))throw new Error('Enter a valid public webpage URL.');
+source.hash='';return 'https://archive.today/newest/'+source.href;
+}
+function parallelArchive(url,lookupUrl,signal){
+if(lookupUrl!==archiveLookupFor(url))return Promise.reject(new Error('Unexpected archive source.'));
+return new Promise((resolve,reject)=>{
+const controller=new AbortController();let remaining=2,finished=false,busyError=null,lastError=null;
+function cleanup(){signal.removeEventListener('abort',cancel);controller.abort();}
+function cancel(){if(finished)return;finished=true;cleanup();const error=new Error('Canceled');error.name='AbortError';reject(error);}
+function fail(error){if(finished)return;lastError=error;if(error.archiveBusy)busyError=error;if(--remaining===0){finished=true;cleanup();reject(busyError||lastError);}}
+function accept(data){if(finished)return;try{const info=inspect(data);if(info.limited||info.blocked)throw new Error('No readable archive.');finished=true;cleanup();resolve(data);}catch(error){fail(error);}}
+if(signal.aborted){cancel();return;}signal.addEventListener('abort',cancel,{once:true});
+request(url,'archive',controller.signal).then(accept,fail);
+browserArchive(lookupUrl,url,controller.signal).then(accept,fail);
+});
 }
 async function requestInApp(url,mode,signal){
-try{return await request(url,mode,signal);}catch(error){if(error.name==='AbortError'||!error.archiveLookupUrl)throw error;return browserArchive(error.archiveLookupUrl,url,signal);}
+if(mode==='archive')return parallelArchive(url,archiveLookupFor(url),signal);
+try{return await request(url,'live',signal);}catch(error){if(error.name==='AbortError'||!error.archiveLookupUrl)throw error;return parallelArchive(url,error.archiveLookupUrl,signal);}
 }
 function articleHints(doc){let restricted=false,expected=0;function visit(value,depth=0){if(!value||typeof value!=='object'||depth>12)return;if(Array.isArray(value)){for(const item of value)visit(item,depth+1);return;}const types=[].concat(value['@type']||[]);if(types.some(t=>/^(?:NewsArticle|Article|BlogPosting|ReportageNewsArticle)$/.test(String(t)))){if(value.isAccessibleForFree===false||value.isAccessibleForFree==='false')restricted=true;const count=Number(value.wordCount);if(Number.isFinite(count)&&count>0&&count<100000)expected=Math.max(expected,count);if(typeof value.articleBody==='string')expected=Math.max(expected,value.articleBody.trim().split(/\s+/).length);}for(const key of ['@graph','mainEntity','hasPart'])if(value[key])visit(value[key],depth+1);}
 for(const node of doc.querySelectorAll('script[type="application/ld+json"]')){try{visit(JSON.parse(node.textContent));}catch{}}
@@ -157,11 +176,11 @@ doc.documentElement.setAttribute('data-open-page-dark',String(articleDark));
 const themeStyle=doc.createElement('style');themeStyle.textContent='html[data-open-page-dark="true"] img,html[data-open-page-dark="true"] picture,html[data-open-page-dark="true"] video,html[data-open-page-dark="true"] canvas,html[data-open-page-dark="true"] svg image{filter:invert(1) hue-rotate(180deg)!important} html[data-open-page-dark="true"] picture img{filter:none!important}';doc.head.append(themeStyle);
 const bridge=doc.createElement('script');bridge.setAttribute('nonce',bridgeKey);bridge.textContent='('+frameScrollBridge.toString()+')('+JSON.stringify(bridgeKey)+');';doc.body.append(bridge);
 return {title,html:'<!doctype html>\n'+doc.documentElement.outerHTML,bridgeKey};}
-$('open-form').onsubmit=async e=>{e.preventDefault();setChromeCollapsed(false);if(typeof navigator!=='undefined'&&navigator.onLine===false){message('You are offline.',true);return;}$('url').blur();if(pending)pending.abort();pending=new AbortController();const control=pending,requestedUrl=$('url').value.trim();$('open').disabled=true;$('open').textContent='Opening…';message('');try{let d=await requestInApp(requestedUrl,'auto',control.signal);if(pending!==control)return;let info=inspect(d);if(d.sourceKind==='live'&&(info.limited||info.words<10)){try{const archived=await requestInApp(d.sourceUrl,'archive',control.signal);const candidate=inspect(archived);if(candidate.words>info.words&&!candidate.limited&&!candidate.blocked){d=archived;info=candidate;}}catch(e){if(e.name==='AbortError')throw e;}}
+$('open-form').onsubmit=async e=>{e.preventDefault();setChromeCollapsed(false);if(typeof navigator!=='undefined'&&navigator.onLine===false){message('You are offline.',true);return;}$('url').blur();if(pending)pending.abort();pending=new AbortController();const control=pending,requestedUrl=$('url').value.trim();let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;control.abort();},25000);$('open').disabled=true;$('open').textContent='Opening…';message('');try{let d=await requestInApp(requestedUrl,'auto',control.signal);if(pending!==control)return;let info=inspect(d);if(d.sourceKind==='live'&&(info.limited||info.words<10)){try{const archived=await requestInApp(d.sourceUrl,'archive',control.signal);const candidate=inspect(archived);if(candidate.words>info.words&&!candidate.limited&&!candidate.blocked){d=archived;info=candidate;}}catch(e){if(e.name==='AbortError')throw e;}}
 if(pending!==control)return;
 if(info.limited||info.blocked)throw new Error('Could not load this page.');
 const visual=prepare(d);frameKey=visual.bridgeKey;$('compact-source').textContent=new URL(d.sourceUrl).hostname;$('page').srcdoc=visual.html;$('page').hidden=false;$('empty').hidden=true;$('actions').hidden=false;$('original').href=d.sourceUrl;document.title=visual.title+' · Open Page';let summary='';if(d.sourceKind==='wayback'||d.sourceKind==='archive-today'){const t=d.archiveTimestamp;summary='Archived · '+t.slice(0,4)+'-'+t.slice(4,6)+'-'+t.slice(6,8);}message(summary);}
-catch(e){if(pending===control&&e.name!=='AbortError')message('Could not load this page.',true);}finally{if(pending===control){$('open').disabled=false;$('open').textContent='Open →';pending=null;}}};
+catch(e){if(pending===control&&(timedOut||e.name!=='AbortError'))message(timedOut?'Loading timed out.':e.archiveBusy?'Archive temporarily unavailable.':'Could not load this page.',true);}finally{clearTimeout(deadline);if(pending===control){$('open').disabled=false;$('open').textContent='Open →';pending=null;}}};
 function closeInstall(){$('install-panel').hidden=true;$('install').focus();}
 $('install').onclick=async()=>{setChromeCollapsed(false);if(installPrompt){const prompt=installPrompt;installPrompt=null;await prompt.prompt();return;}$('install-text').textContent=/iPad|iPhone|iPod/.test(navigator.userAgent)?'In Safari, tap Share, then Add to Home Screen.':'Open your browser menu and choose Install app or Add to Home Screen.';$('install-panel').hidden=false;$('close-install').focus();};
 $('close-install').onclick=closeInstall;$('install-panel').onclick=e=>{if(e.target===$('install-panel'))closeInstall();};

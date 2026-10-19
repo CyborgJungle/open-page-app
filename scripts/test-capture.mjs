@@ -44,6 +44,7 @@ r=await call('archive','http://127.0.0.1/');assert.equal(r.status,422);assert.eq
 scenario='encoding';r=await call();assert.equal(r.data.html,'café');assert.equal(r.data.responseSha256,createHash('sha256').update(Buffer.from([99,97,102,233])).digest('hex'));assert.equal(r.data.responseBytes,4);
 for(const s of ['redirect','robots','large','binary']){scenario=s;r=await call();assert.equal(r.status,422,s);}
 scenario='live';networkCalls=[];r=await call('live','https://private.publisher.org/');assert.equal(r.status,422);assert.ok(!networkCalls.some(x=>x.startsWith('https://private.publisher.org')));
+const canceled=new AbortController();canceled.abort();networkCalls=[];const stopped=await worker.fetch(new Request('https://folio.test/api/capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'https://publisher.org/story',mode:'auto'}),signal:canceled.signal}));assert.equal(stopped.status,422);assert.equal(networkCalls.length,0);
 const cross=await worker.fetch(new Request('https://folio.test/api/capture',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'}));assert.equal(cross.status,403);
 const bad=await worker.fetch(new Request('https://folio.test/api/capture',{method:'GET'}));assert.equal(bad.status,405);
 const home=await worker.fetch(new Request('https://folio.test/'));assert.equal(home.status,200);assert.match(home.headers.get('content-security-policy'),/frame-ancestors 'none'/);

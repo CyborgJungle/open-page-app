@@ -1,42 +1,66 @@
 # Open Page
 
-An installable, minimal web app: paste a URL, click Open, and see the available page with its original static layout, styles, and images.
+An installable web app: paste a URL, press Open, and read the page with its original layout, styles and images, without the site's scripts and pop-ups.
 
-Live app: https://open-page-eta.vercel.app
+**Live:** [open-page-eta.vercel.app](https://open-page-eta.vercel.app) · **Stack:** JavaScript, Vercel Functions
 
-The backend fetches public HTML anonymously. The viewer removes website scripts and static subscription dialogs, keeps available article content, and isolates the snapshot in a sandboxed frame. The viewer first requests live HTML. When that fails, the hosted archive search and the browser archive fetch run concurrently; the first readable result is used and the other attempt is canceled. The hosted archive search tries a publicly available Wayback snapshot, then Archive.today. Short captures containing subscription notices also trigger a lookup. An archive is selected only when it contains more text without a detected subscription notice. Historical copies display the archive date. Archive.today snapshots must declare the exact requested source URL in their archive metadata; challenges, unexpected archive hosts, and unrelated snapshots are rejected.
+## What it does
 
-Archive.today's documented `/newest/` endpoint is tried before its snapshot listing. When hosted capture is blocked, the browser can fetch the public snapshot directly from archive.ph using its permitted CORS access, without sending cookies. The requested source and snapshot metadata must match. Browser archive responses have an 8 MB byte limit and a 20-second timeout: frozen layouts, including NYT article snapshots, can exceed the server's 2 MB capture limit. The browser reader checks both declared and streamed sizes and also supports browsers without stream readers. All captured HTML goes through the same script removal and sandboxed viewer, keeping the app domain and toolbar in place. Frozen archive layouts are centered on desktop and reflow their article and images on narrow screens. Empty advertising placeholders, including Dutch labels, are removed while substantive media stays. The app never navigates the visitor to an archive service or opens a fallback tab. The whole open operation has one 25-second deadline rather than stacking sequential retry waits. If no readable capture is available, a single short message is shown inside the existing interface. An archive HTTP 429 reports “Archive temporarily unavailable.” instead of a generic page error. The app does not automate challenges or create archive captures.
+- Opens a public web page with its static layout and images, with the site's scripts and subscription dialogs removed.
+- Falls back to an archived copy (Wayback Machine or Archive.today) when the live page can't be read, and shows the archive date.
+- Installs on the iPhone home screen (Safari → Share → Add to Home Screen) and starts in standalone mode. The app shell works offline after the first visit.
+- Targets screens from 320px wide, with 44px touch controls and a 16px input to avoid focus zoom.
 
-This cannot universally obtain full subscriber-only content that a publisher's server withholds. Archived copies may be unavailable, older, or incomplete. Dynamic pages that depend on JavaScript can render incompletely. Captured pages retain external styles, fonts, images, and media references, so they require internet access. Visitors see no bulk controls, collection, or explanatory sections.
+## How it's built
 
-## Development
+A single Vercel Function fetches and cleans pages; the client is plain JavaScript with no framework and no runtime dependencies.
 
-Requires Node.js 24 or newer. The hosted Worker has no runtime dependencies. Development checks use `linkedom`; install them with `npm install`.
+### How a page is opened
 
-- `node dev-server.mjs` starts the local preview at http://localhost:4173.
-- Edit `work-ui.html` and `work-backend.js`, then run `node scripts/assemble.mjs`.
-- `npm test` checks fetch behavior, presentation cleanup, subscription metadata, short excerpts, and access challenges. A local WIRED HTML fixture, when present, is also checked without being distributed in source.
-- `bash scripts/build.sh` and `node scripts/validate-artifact.mjs` build and validate the Worker.
+1. **Live first.** The backend fetches the public HTML anonymously. The viewer removes the site's scripts and static subscription dialogs, keeps the article content, and shows the result in a sandboxed frame.
+2. **Archive fallback.** If the live page can't be read, a hosted archive search (Wayback Machine, then Archive.today) and a direct browser fetch from Archive.today run at the same time. The first readable result wins and the other attempt is cancelled.
+3. **Only better copies.** An archive is used only if it has more text and no detected subscription notice. Old copies show their archive date. Archive.today snapshots must declare the exact requested URL; challenge pages, unexpected hosts and unrelated snapshots are rejected.
+4. **One deadline.** The whole operation has a single 25-second limit instead of stacking retries. If nothing readable is found, one short message appears inside the existing interface.
 
-The backend checks public DNS addresses and redirect targets, respects live robots.txt rules, limits response bodies to 2 MB, and allows up to 6 seconds for live capture and 18 seconds for archive lookup within a shared 24-second request budget; client disconnection cancels upstream work. The combined archive search reserves at most 8 seconds for Wayback and gives the remaining time to Archive.today. No archive-capture submissions are made. Source URLs, capture timestamps, archive timestamps, and response hashes are returned by the capture API. Response hashes cover received bytes after HTTP content decoding and before text character decoding.
+The app never sends the visitor to an archive site, never automates challenges and never creates archive captures.
 
-The production entrypoint is `worker/index.js`. Site identity is in `.openai/hosting.json`.
+### Safety choices
 
-## Vercel deployment
+- Public DNS addresses and redirect targets are checked before anything is fetched.
+- Live `robots.txt` rules are respected.
+- Responses are limited to 2 MB on the server (8 MB and 20 seconds for the browser-side archive fetch).
+- Disconnecting cancels the upstream requests.
+- The viewer frame has no same-origin privileges. A nonce-authorized scroll bridge is the only script inside it.
+- The capture API returns the source URL, timestamps and a hash of the received bytes, so a result can be traced.
 
-The private `CyborgJungle/open-page` repository is connected to the `open-page` project in the `cyborgjungle` Vercel team. Pushing to `main` automatically deploys the production app.
+## Run it locally
 
-Import the repository into Vercel with the Other framework preset. `vercel.json` selects the build command and routes capture requests through `api/index.mjs`, using the same backend as the Worker deployment. The website, icon assets, and service worker are generated in `public/` with matching security headers. No environment variables are required. The function has a 60-second platform duration; the capture handler enforces its shorter request budget. `npm run build:vercel` prepares this deployment; `npm test` verifies the route adapter, static output, headers, and request body forwarding.
+Requires Node.js 24 or newer. The tests use `linkedom`.
 
-Empty advertising wrappers are collapsed using stable semantic classes and ad attributes, without matching ordinary words such as address or deleting substantive article media. Incomplete-page detection uses Article/NewsArticle schema metadata, declared article length, article-body text, and access-challenge markers. Metadata is a signal, not proof of completeness or a grant of access.
+```sh
+npm install
+npm run dev      # local preview at http://localhost:4173
+npm test         # fetch behavior, cleanup, subscription metadata, scrolling, Vercel adapter
+npm run build    # prepare the Vercel website and capture function
+```
 
-## Install and iPhone support
+Edit `work-ui.html` and `work-backend.js`; the build assembles them into the worker in `worker/index.js`.
 
-Open the public site in Safari, use Share → Add to Home Screen, and tap Add. An Install button also explains this action. The supplied custom icon is bundled at 180px for iPhone, 192px and 512px for web app manifests, and 32px for the browser tab. The manifest launches in standalone mode.
+## Deploy on Vercel
 
-The layout targets 320px and larger screens with 44px touch controls, a 16px URL input to avoid focus zoom, safe-area padding, and viewport sizing that does not require modern dynamic viewport units. JavaScript avoids optional chaining in the client, and spacing has fallbacks for Safari without flex-gap support. Actual old-iPhone hardware and OS versions have not been tested in this environment.
+Import the repository into Vercel with the **Other** framework preset. `vercel.json` sets the build command and routes capture requests through `api/index.mjs`. No environment variables are needed. The function allows up to 60 seconds, while the capture handler enforces its own shorter budget.
 
-The app shell is available offline after a successful first visit. Loading a new webpage and loading external images/styles still require internet access. Capture API responses are never cached by the service worker. There is no save or download action. The toolbar reduces to a compact source strip when scrolling down and returns on upward scrolling; tapping the strip also restores it.
+## Limits
 
-A nonce-authorized, app-owned scroll bridge runs in the sandboxed viewer. Publisher scripts and handlers remain removed; the frame does not receive same-origin privileges. The parent accepts scroll messages only from its current frame and matching per-load channel.
+- It can't get subscriber-only content that a publisher's server withholds.
+- Archived copies may be missing, older or incomplete.
+- Pages that depend on JavaScript can render incompletely.
+- Captured pages still load their fonts, images and styles from the original sites, so they need internet access.
+
+## About
+
+A personal project by [CyborgJungle](https://github.com/CyborgJungle), built with [Claude Code](https://claude.com/claude-code) and hosted on [Vercel](https://vercel.com). It is shared as part of my portfolio: feel free to copy it and make it your own.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

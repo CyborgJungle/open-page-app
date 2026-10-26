@@ -1,6 +1,5 @@
 dist
 node_modules
 fixtures
-.openai
 .env*
 site.tar.gz
